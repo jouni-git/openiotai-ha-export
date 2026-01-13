@@ -1,11 +1,27 @@
 {
   "name": "OpenIOTAI MQTT Export",
   "slug": "openiotai_export",
-  "description": "Export Home Assistant sensor data to OpenIOTAI via MQTT",
-  "version": "0.1.0",
+  "description": "Export Home Assistant data to OpenIOTAI via MQTT over TLS",
+  "version": "0.2.1",
   "startup": "services",
   "boot": "auto",
   "arch": ["amd64", "armv7", "armhf", "aarch64"],
-  "options": {},
-  "schema": {}
+
+  "options": {
+    "mqtt_host": "tiilikainen.asuscomm.com",
+    "mqtt_port": 8883,
+    "mqtt_topic": "data/hamqtt-topic",
+    "gateway_id": "hag-001",
+    "tls_ca_file": "/ssl/ca.crt"
+  },
+
+  "schema": {
+    "mqtt_host": "str",
+    "mqtt_port": "int",
+    "mqtt_username": "str",
+    "mqtt_password": "password",
+    "mqtt_topic": "str",
+    "gateway_id": "str",
+    "tls_ca_file": "str"
+  }
 }

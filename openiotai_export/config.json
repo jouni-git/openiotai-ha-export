@@ -1,0 +1,11 @@
+{
+  "name": "OpenIOTAI MQTT Export",
+  "slug": "openiotai_export",
+  "description": "Export Home Assistant sensor data to OpenIOTAI via MQTT",
+  "version": "0.1.0",
+  "startup": "services",
+  "boot": "auto",
+  "arch": ["amd64", "armv7", "armhf", "aarch64"],
+  "options": {},
+  "schema": {}
+}

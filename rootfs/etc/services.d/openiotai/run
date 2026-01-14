@@ -1,4 +1,3 @@
-#!/usr/bin/with-contenv bash
+#!/bin/sh
 echo "S6 SERVICE STARTED" >&2
-ps -o pid,cmd >&2
 exec python3 /app/run.py

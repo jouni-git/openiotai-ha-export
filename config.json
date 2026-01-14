@@ -11,7 +11,7 @@
   "build": {
     "dockerfile": "Dockerfile",
     "build_from": {
-      "aarch64": "ghcr.io/hassio-addons/base/aarch64:14.0.0"
+      "aarch64": "python:3.11-slim"
     }
   },
 

@@ -3,6 +3,7 @@
 
 #RUN apk add --no-cache python3
 
+#### ÄLÄ MUUTA TÄTÄ DOCKERFILEÄ ####
 FROM python:3.11-slim
 
 WORKDIR /app

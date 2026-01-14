@@ -6,4 +6,5 @@ RUN apk add --no-cache python3
 WORKDIR /app
 COPY run.py /app/run.py
 
-COPY rootfs /
+CMD ["python3", "/app/run.py"]
+#COPY rootfs /

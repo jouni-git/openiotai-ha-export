@@ -1,3 +1,5 @@
 #!/bin/sh
-echo "S6 SERVICE STARTED" >&2
-exec python3 /app/run.py
+set -x
+echo "RUN SCRIPT STARTED" >&2
+python3 -u /app/run.py || echo "PYTHON EXIT CODE: $?" >&2
+sleep 300

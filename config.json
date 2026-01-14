@@ -2,7 +2,7 @@
   "name": "OpenIOTAI MQTT Export",
   "slug": "openiotai_export",
   "description": "Export Home Assistant data to OpenIOTAI via MQTT over TLS",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "startup": "services",
   "boot": "auto",
   "arch": ["aarch64"],

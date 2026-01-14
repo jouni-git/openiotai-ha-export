@@ -1,23 +1,21 @@
-import os
+import sys
 import time
 from datetime import datetime
+import os
 
 
-def log(msg: str):
-    print(f"[{datetime.utcnow().isoformat()}] {msg}", flush=True)
+def log(msg):
+    sys.stdout.write(msg + "\n")
+    sys.stdout.flush()
 
 
-def main():
-    log("DUMMY ADD-ON STARTED")
-    log(f"PID: {os.getpid()}")
-    log(f"ENV VARS: {list(os.environ.keys())[:10]}")
+log("=== OPENIOTAI ADD-ON STARTING ===")
+log(f"PID={os.getpid()}")
+log(f"PYTHON={sys.version}")
+log(f"CWD={os.getcwd()}")
 
-    counter = 0
-    while True:
-        log(f"Dummy heartbeat {counter}")
-        counter += 1
-        time.sleep(10)
-
-
-if __name__ == "__main__":
-    main()
+counter = 0
+while True:
+    log(f"[{datetime.utcnow().isoformat()}] OPENIOTAI ADDON ALIVE – heartbeat={counter}")
+    counter += 1
+    time.sleep(10)

@@ -1,5 +1,2 @@
-#!/bin/sh
-set -x
-echo "RUN SCRIPT STARTED" >&2
-python3 -u /app/run.py || echo "PYTHON EXIT CODE: $?" >&2
-sleep 300
+#!/usr/bin/with-contenv sh
+exec python3 /app/run.py

@@ -7,8 +7,6 @@
   "boot": "auto",
   "arch": ["amd64", "armv7", "armhf", "aarch64"],
 
-  "image": "ghcr.io/home-assistant/{arch}-base:latest",
-
   "options": {
     "mqtt_host": "tiilikainen.asuscomm.com",
     "mqtt_port": 8883,

@@ -2,9 +2,9 @@ import json
 import os
 import sys
 import asyncio
-from datetime import datetime
+import time
 import re
-import ssl
+from datetime import datetime
 
 import paho.mqtt.client as mqtt
 
@@ -63,60 +63,14 @@ def normalize_unit(unit: str | None) -> str | None:
 
     unit = UNIT_MAP.get(unit, unit)
     unit = re.sub(r"[^a-zA-Z0-9]+", "_", unit)
-
-    return unit.strip("_")
-
-
-# ---------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------
-
-def init_mqtt_client(options):
-    host = options.get("mqtt_host")
-    port = int(options.get("mqtt_port", 8883))
-    username = options.get("mqtt_username")
-    password = options.get("mqtt_password")
-
-    if not host:
-        fatal("Missing required option: mqtt_host (set it in the add-on Configuration tab)")
-
-    client = mqtt.Client(protocol=mqtt.MQTTv311)
-
-    if username and password:
-        client.username_pw_set(username, password)
-
-    client.tls_set(
-        cert_reqs=ssl.CERT_REQUIRED,
-        tls_version=ssl.PROTOCOL_TLS_CLIENT,
-    )
-    client.tls_insecure_set(False)
-
-    try:
-        client.connect(host, port, keepalive=60)
-    except Exception as e:
-        fatal(f"Failed to connect to MQTT broker via TLS: {e}")
-
-    log("INFO", f"Connected to MQTT broker {host}:{port} (TLS)")
-    return client
-
-
-def mqtt_publish(client, topic: str, payload: dict):
-    data = json.dumps(payload, ensure_ascii=False)
-
-    # Always show preview
-    log("MQTT_PREVIEW", data)
-
-    try:
-        client.publish(topic, data, qos=0, retain=False)
-    except Exception as e:
-        log("ERROR", f"MQTT publish failed: {e}")
+    return unit.strip("_") or None
 
 
 # ---------------------------------------------------------------------
 # Payload builders
 # ---------------------------------------------------------------------
 
-def build_sensor_payload(entity_id: str, value, unit: str | None):
+def build_sensor_payload(entity_id: str, value: float, unit: str | None):
     key = f"{entity_id}_{unit}" if unit else entity_id
     return {key: value}
 
@@ -126,10 +80,57 @@ def build_heartbeat_payload(gateway_id: str, counter: int):
 
 
 # ---------------------------------------------------------------------
+# MQTT
+# ---------------------------------------------------------------------
+
+def setup_mqtt(options):
+    host = options.get("mqtt_host")
+    port = int(options.get("mqtt_port", 8883))
+    username = options.get("mqtt_username")
+    password = options.get("mqtt_password")
+
+    if not host:
+        fatal("mqtt_host not defined in options")
+
+    client = mqtt.Client(protocol=mqtt.MQTTv311)
+
+    if username:
+        client.username_pw_set(username, password)
+
+    # TLS – system CA store is fine (Let's Encrypt)
+    client.tls_set()
+    client.tls_insecure_set(False)
+
+    try:
+        client.connect(host, port, keepalive=60)
+    except Exception as e:
+        fatal(f"Failed to connect to MQTT broker: {e}")
+
+    client.loop_start()
+    log("INFO", f"Connected to MQTT broker {host}:{port} (TLS)")
+    return client
+
+
+def mqtt_publish(client, topic: str, payload: dict):
+    payload_json = json.dumps(payload, ensure_ascii=False)
+
+    log("MQTT_PREVIEW", payload_json)
+
+    try:
+        result = client.publish(topic, payload_json, qos=0)
+        if result.rc == mqtt.MQTT_ERR_SUCCESS:
+            log("MQTT_SENT", payload_json)
+        else:
+            log("MQTT_ERROR", f"Publish failed rc={result.rc}")
+    except Exception as e:
+        log("MQTT_ERROR", f"Exception during publish: {e}")
+
+
+# ---------------------------------------------------------------------
 # Home Assistant WebSocket listener
 # ---------------------------------------------------------------------
 
-async def ha_event_listener(gateway_id, mqtt_client, mqtt_topic):
+async def ha_event_listener(mqtt_client, mqtt_topic: str):
     try:
         import websockets
     except Exception:
@@ -193,7 +194,7 @@ async def ha_event_listener(gateway_id, mqtt_client, mqtt_topic):
 # Heartbeat
 # ---------------------------------------------------------------------
 
-async def heartbeat_loop(gateway_id, interval, mqtt_client, mqtt_topic):
+async def heartbeat_loop(mqtt_client, mqtt_topic: str, gateway_id: str, interval: int):
     counter = 0
     log("INFO", "Heartbeat loop started")
 
@@ -217,21 +218,18 @@ def main():
 
     gateway_id = options.get("gateway_id", "unknown")
     interval = int(options.get("heartbeat_interval_seconds", 15))
-
     mqtt_topic = options.get("mqtt_topic")
-    if not mqtt_topic or not isinstance(mqtt_topic, str):
-        fatal("Missing required option: mqtt_topic (set it in the add-on Configuration tab)")
-    mqtt_topic = mqtt_topic.strip()
-    if not mqtt_topic:
-        fatal("mqtt_topic is empty (set it in the add-on Configuration tab)")
 
-    mqtt_client = init_mqtt_client(options)
+    if not mqtt_topic:
+        fatal("mqtt_topic not defined in options")
+
+    mqtt_client = setup_mqtt(options)
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(
         asyncio.gather(
-            ha_event_listener(gateway_id, mqtt_client, mqtt_topic),
-            heartbeat_loop(gateway_id, interval, mqtt_client, mqtt_topic),
+            ha_event_listener(mqtt_client, mqtt_topic),
+            heartbeat_loop(mqtt_client, mqtt_topic, gateway_id, interval),
         )
     )
 

@@ -2,19 +2,16 @@
   "name": "OpenIOTAI MQTT Export",
   "slug": "openiotai_export",
   "description": "Export Home Assistant data to OpenIOTAI via MQTT over TLS",
-  "version": "20260115-1726",
+  "version": "20260115-1741",
   "startup": "application",
   "boot": "auto",
   "arch": ["aarch64"],
+  "homeassistant_api": true,
 
-
+ 
   "build": {
-    "dockerfile": "Dockerfile",
-    "build_from": {
-      "aarch64": "ghcr.io/hassio-addons/base/aarch64:14.0.0"
-    }
+    "dockerfile": "Dockerfile"
   },
-
 
   "options": {
     "mqtt_host": "tiilikainen.asuscomm.com",

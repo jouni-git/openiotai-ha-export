@@ -2,7 +2,7 @@
   "name": "OpenIOTAI MQTT Export",
   "slug": "openiotai_export",
   "description": "Export Home Assistant data to OpenIOTAI via MQTT over TLS",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "startup": "application",
   "boot": "auto",
   "arch": ["aarch64"],
@@ -22,6 +22,7 @@
     "mqtt_topic": "data/hamqtt-topic",
     "mqtt_username": "hamqtt",
     "mqtt_password": "hamqttpass",
+    "heartbeat_interval_seconds": 15,
     "gateway_id": "hag-001",
     "tls_ca_url": "https://letsencrypt.org/certs/isrgrootx1.pem"
   },
@@ -29,9 +30,10 @@
   "schema": {
     "mqtt_host": "str",
     "mqtt_port": "int",
+    "mqtt_topic": "str",
     "mqtt_username": "str",
     "mqtt_password": "password",
-    "mqtt_topic": "str",
+    "heartbeat_interval_seconds": "int",
     "gateway_id": "str",
     "tls_ca_url": "str"
   }

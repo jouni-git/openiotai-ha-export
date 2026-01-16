@@ -2,7 +2,7 @@
   "name": "OpenIOTAI HA Exporter",
   "slug": "openiotai_ha_export",
   "description": "Event-based exporter that streams Home Assistant state changes to OpenIOTAI via MQTT over TLS",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "startup": "application",
   "boot": "auto",
   "arch": ["aarch64"],

@@ -63,7 +63,8 @@ def publish(c, topic, payload):
 async def ha_listener(c, topic, gateway_id):
     try:
         import websockets
-    except Exception: fatal("websockets missing")
+    except Exception:
+        fatal("websockets missing")
 
     token = os.environ.get("SUPERVISOR_TOKEN") or fatal("SUPERVISOR_TOKEN missing")
     backoff = 1
@@ -74,7 +75,11 @@ async def ha_listener(c, topic, gateway_id):
                 json.loads(await ws.recv())
                 await ws.send(json.dumps({"type": "auth", "access_token": token}))
                 json.loads(await ws.recv())
-                await ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
+                await ws.send(json.dumps({
+                    "id": 1,
+                    "type": "subscribe_events",
+                    "event_type": "state_changed"
+                }))
                 backoff = 1
 
                 while not shutdown_event.is_set():
@@ -84,14 +89,38 @@ async def ha_listener(c, topic, gateway_id):
                         log("WS_ERROR", str(e))
                         break
 
-                    if msg.get("type") != "event": continue
+                    if msg.get("type") != "event":
+                        continue
+
+                    ev = msg.get("event", {})
+                    data = ev.get("data", {})
+
+                    ns = data.get("new_state")
+                    os_ = data.get("old_state")
+
+                    if not ns or not os_:
+                        continue
+
+                    # --- Validate numeric measurement ---
+                    try:
+                        new_val = float(ns.get("state"))
+                        old_val = float(os_.get("state"))
+                    except Exception:
+                        continue
+
+                    # --- Ignore non-changing or transient updates ---
+                    if new_val == old_val:
+                        continue
 
                     publish(c, topic, {
                         "schema_version": 1,
                         "source": "homeassistant",
                         "ts": int(datetime.utcnow().timestamp() * 1000),
-                        "gateway": {"type": "ha_addon", "gateway_id": gateway_id},
-                        "event": msg["event"],
+                        "gateway": {
+                            "type": "ha_addon",
+                            "gateway_id": gateway_id
+                        },
+                        "event": ev,
                     })
 
         except Exception as e:
@@ -101,6 +130,8 @@ async def ha_listener(c, topic, gateway_id):
             await asyncio.wait_for(shutdown_event.wait(), timeout=backoff)
         except asyncio.TimeoutError:
             backoff = min(backoff * 2, 30)
+
+
 
 # ---------------------------------------------------------------------
 # Heartbeat

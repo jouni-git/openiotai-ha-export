@@ -1,297 +1,142 @@
-import json
-import os
-import sys
-import asyncio
-import re
-import signal
+import json, os, sys, asyncio, signal
 from datetime import datetime
-
 import paho.mqtt.client as mqtt
 
 OPTIONS_FILE = "/data/options.json"
 HA_WS_URL = "ws://supervisor/core/api/websocket"
-
 shutdown_event = asyncio.Event()
 
 # ---------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------
 
-def log(level: str, msg: str):
-    ts = datetime.utcnow().isoformat()
-    sys.stdout.write(f"[{ts}] [{level}] {msg}\n")
+def log(level, msg):
+    sys.stdout.write(f"[{datetime.utcnow().isoformat()}] [{level}] {msg}\n")
     sys.stdout.flush()
 
-
-def fatal(msg: str):
+def fatal(msg):
     log("FATAL", msg)
     sys.exit(1)
 
-
 # ---------------------------------------------------------------------
-# Shutdown handling (TEST osa 261 – 1B)
+# Shutdown handling
 # ---------------------------------------------------------------------
 
-def _request_shutdown(signum, frame):
-    log("INFO", f"Shutdown requested (signal {signum})")
+def shutdown(signum, frame):
+    log("INFO", f"Shutdown signal {signum}")
     shutdown_event.set()
-
 
 # ---------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------
 
 def load_options():
-    if not os.path.exists(OPTIONS_FILE):
-        fatal(f"Options file not found: {OPTIONS_FILE}")
-
     try:
-        with open(OPTIONS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        fatal(f"Failed to load options.json: {e}")
-
-
-# ---------------------------------------------------------------------
-# Unit normalization
-# ---------------------------------------------------------------------
-
-UNIT_MAP = {
-    "°C": "C",
-    "°F": "F",
-    "V": "V",
-    "A": "A",
-    "W": "W",
-    "%": "pct",
-    "hPa": "hPa",
-}
-
-
-def normalize_unit(unit: str | None) -> str | None:
-    if not unit:
-        return None
-
-    unit = UNIT_MAP.get(unit, unit)
-    unit = re.sub(r"[^a-zA-Z0-9]+", "_", unit)
-    return unit.strip("_") or None
-
-
-# ---------------------------------------------------------------------
-# Payload builders
-# ---------------------------------------------------------------------
-
-def build_sensor_payload(entity_id: str, value: float, unit: str | None):
-    key = f"{entity_id}_{unit}" if unit else entity_id
-    return {key: value}
-
-
-def build_heartbeat_payload(gateway_id: str, counter: int):
-    return {f"heartbeat.gateway.{gateway_id}": counter}
-
+        with open(OPTIONS_FILE, "r", encoding="utf-8") as f: return json.load(f)
+    except Exception as e: fatal(f"options.json error: {e}")
 
 # ---------------------------------------------------------------------
 # MQTT
 # ---------------------------------------------------------------------
 
-def setup_mqtt(options):
-    host = options.get("mqtt_host")
-    port = int(options.get("mqtt_port", 8883))
-    username = options.get("mqtt_username")
-    password = options.get("mqtt_password")
+def mqtt_setup(o):
+    c = mqtt.Client(protocol=mqtt.MQTTv311)
+    if o.get("mqtt_username"): c.username_pw_set(o["mqtt_username"], o.get("mqtt_password"))
+    c.tls_set()
+    c.connect(o["mqtt_host"], int(o.get("mqtt_port", 8883)), 60)
+    c.loop_start()
+    log("INFO", "MQTT connected")
+    return c
 
-    if not host:
-        fatal("mqtt_host not defined in options")
-
-    client = mqtt.Client(protocol=mqtt.MQTTv311)
-
-    if username:
-        client.username_pw_set(username, password)
-
-    client.tls_set()
-    client.tls_insecure_set(False)
-
+def publish(c, topic, payload):
     try:
-        client.connect(host, port, keepalive=60)
+        data = json.dumps(payload, ensure_ascii=False)
+        c.publish(topic, data, qos=1)
+        log("MQTT_SENT", f"{len(data)} bytes")
     except Exception as e:
-        fatal(f"Failed to connect to MQTT broker: {e}")
-
-    client.loop_start()
-    log("INFO", f"Connected to MQTT broker {host}:{port} (TLS)")
-    return client
-
-
-def mqtt_publish(client, topic: str, payload: dict):
-    payload_json = json.dumps(payload, ensure_ascii=False)
-    log("MQTT_PREVIEW", payload_json)
-
-    try:
-        result = client.publish(topic, payload_json, qos=0)
-        if result.rc == mqtt.MQTT_ERR_SUCCESS:
-            log("MQTT_SENT", payload_json)
-        else:
-            log("MQTT_ERROR", f"Publish failed rc={result.rc}")
-    except Exception as e:
-        log("MQTT_ERROR", f"Exception during publish: {e}")
-
+        log("MQTT_ERROR", str(e))
 
 # ---------------------------------------------------------------------
-# Home Assistant WebSocket listener (TEST osa 261 – 1A + 1B)
+# Home Assistant WebSocket listener
 # ---------------------------------------------------------------------
 
-async def ha_event_listener(mqtt_client, mqtt_topic: str):
+async def ha_listener(c, topic, gateway_id):
     try:
         import websockets
-        from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
-    except Exception:
-        fatal("Python dependency 'websockets' not found")
+    except Exception: fatal("websockets missing")
 
-    token = os.environ.get("SUPERVISOR_TOKEN")
-    if not token:
-        fatal("SUPERVISOR_TOKEN not found")
-
+    token = os.environ.get("SUPERVISOR_TOKEN") or fatal("SUPERVISOR_TOKEN missing")
     backoff = 1
-    max_backoff = 30
 
     while not shutdown_event.is_set():
         try:
-            log("INFO", f"Connecting to Home Assistant WebSocket at {HA_WS_URL}")
-
             async with websockets.connect(HA_WS_URL) as ws:
+                json.loads(await ws.recv())
+                await ws.send(json.dumps({"type": "auth", "access_token": token}))
+                json.loads(await ws.recv())
+                await ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
                 backoff = 1
-
-                msg = json.loads(await ws.recv())
-                if msg.get("type") != "auth_required":
-                    raise RuntimeError(f"Unexpected WS message: {msg}")
-
-                await ws.send(json.dumps({
-                    "type": "auth",
-                    "access_token": token,
-                }))
-
-                msg = json.loads(await ws.recv())
-                if msg.get("type") != "auth_ok":
-                    raise RuntimeError(f"Authentication failed: {msg}")
-
-                log("INFO", "Authenticated to Home Assistant WebSocket")
-
-                await ws.send(json.dumps({
-                    "id": 1,
-                    "type": "subscribe_events",
-                    "event_type": "state_changed",
-                }))
-
-                log("INFO", "Subscribed to state_changed events")
 
                 while not shutdown_event.is_set():
                     try:
-                        raw = await ws.recv()
-                        event = json.loads(raw)
-                    except ConnectionClosedOK:
-                        log("INFO", "WebSocket closed normally by Home Assistant")
-                        break
-                    except ConnectionClosedError as e:
-                        log("WARNING", f"WebSocket closed with error: {e}")
-                        break
+                        msg = json.loads(await ws.recv())
                     except Exception as e:
-                        log("WARNING", f"WebSocket receive error: {e}")
+                        log("WS_ERROR", str(e))
                         break
 
-                    if event.get("type") != "event":
-                        continue
+                    if msg.get("type") != "event": continue
 
-                    data = event.get("event", {}).get("data", {})
-                    entity_id = data.get("entity_id")
-
-                    new_state = data.get("new_state")
-                    if not new_state:
-                        continue
-
-                    try:
-                        value = float(new_state.get("state"))
-                    except Exception:
-                        continue
-
-                    attrs = new_state.get("attributes", {})
-                    unit = normalize_unit(attrs.get("unit_of_measurement"))
-
-                    payload = build_sensor_payload(entity_id, value, unit)
-                    mqtt_publish(mqtt_client, mqtt_topic, payload)
+                    publish(c, topic, {
+                        "schema_version": 1,
+                        "source": "homeassistant",
+                        "ts": int(datetime.utcnow().timestamp() * 1000),
+                        "gateway": {"type": "ha_addon", "gateway_id": gateway_id},
+                        "event": msg["event"],
+                    })
 
         except Exception as e:
-            log("WARNING", f"WebSocket session failed: {e}")
+            log("WS_WARN", str(e))
 
-        if shutdown_event.is_set():
-            break
-
-        log("INFO", f"Reconnecting WebSocket in {backoff} seconds")
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=backoff)
         except asyncio.TimeoutError:
-            pass
-
-        backoff = min(backoff * 2, max_backoff)
-
-    log("INFO", "WebSocket listener stopped")
-
+            backoff = min(backoff * 2, 30)
 
 # ---------------------------------------------------------------------
 # Heartbeat
 # ---------------------------------------------------------------------
 
-async def heartbeat_loop(mqtt_client, mqtt_topic: str, gateway_id: str, interval: int):
+async def heartbeat(c, topic, gateway_id, interval):
     counter = 0
-    log("INFO", "Heartbeat loop started")
-
     while not shutdown_event.is_set():
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
         except asyncio.TimeoutError:
             counter += 1
-            payload = build_heartbeat_payload(gateway_id, counter)
-            mqtt_publish(mqtt_client, mqtt_topic, payload)
-
-    log("INFO", "Heartbeat loop stopped")
-
+            publish(c, topic, {
+                "schema_version": 1,
+                "source": "ha_addon",
+                "ts": int(datetime.utcnow().timestamp() * 1000),
+                "heartbeat": {"gateway_id": gateway_id, "counter": counter},
+            })
 
 # ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
 
 def main():
-    log("INFO", "=== OPENIOTAI ADD-ON STARTING ===")
-    log("INFO", f"PID={os.getpid()}")
-    log("INFO", f"PYTHON={sys.version}")
+    log("INFO", "OPENIOTAI ADD-ON START")
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
 
-    signal.signal(signal.SIGTERM, _request_shutdown)
-    signal.signal(signal.SIGINT, _request_shutdown)
+    o = load_options()
+    c = mqtt_setup(o)
 
-    options = load_options()
-
-    gateway_id = options.get("gateway_id", "unknown")
-    interval = int(options.get("heartbeat_interval_seconds", 15))
-    mqtt_topic = options.get("mqtt_topic")
-
-    if not mqtt_topic:
-        fatal("mqtt_topic not defined in options")
-
-    mqtt_client = setup_mqtt(options)
-
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(
-            asyncio.gather(
-                ha_event_listener(mqtt_client, mqtt_topic),
-                heartbeat_loop(mqtt_client, mqtt_topic, gateway_id, interval),
-            )
-        )
-    finally:
-        log("INFO", "Shutting down MQTT client")
-        try:
-            mqtt_client.loop_stop()
-            mqtt_client.disconnect()
-        except Exception as e:
-            log("WARNING", f"MQTT shutdown error: {e}")
-
+    asyncio.get_event_loop().run_until_complete(asyncio.gather(
+        ha_listener(c, o["mqtt_topic"], o.get("gateway_id", "unknown")),
+        heartbeat(c, o["mqtt_topic"], o.get("gateway_id", "unknown"),
+                  int(o.get("heartbeat_interval_seconds", 15)))
+    ))
 
 if __name__ == "__main__":
     main()

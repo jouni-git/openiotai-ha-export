@@ -1,6 +1,7 @@
 import json, os, sys, asyncio, signal
 from datetime import datetime
 import paho.mqtt.client as mqtt
+import re
 
 OPTIONS_FILE = "/data/options.json"
 HA_WS_URL = "ws://supervisor/core/api/websocket"
@@ -39,6 +40,18 @@ def load_options():
 # MQTT
 # ---------------------------------------------------------------------
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x1F\x7F]")
+def deep_clean(value):
+    if isinstance(value, str):
+        return _CONTROL_CHARS.sub("", value).strip()
+    if isinstance(value, list):
+        return [deep_clean(v) for v in value]
+    if isinstance(value, dict):
+        return {deep_clean(k): deep_clean(v) for k, v in value.items()}  # key + value
+    return value
+
+
+
 def mqtt_setup(o):
     c = mqtt.Client(protocol=mqtt.MQTTv311)
     if o.get("mqtt_username"): c.username_pw_set(o["mqtt_username"], o.get("mqtt_password"))
@@ -48,13 +61,16 @@ def mqtt_setup(o):
     log("INFO", "MQTT connected")
     return c
 
+
 def publish(c, topic, payload):
     try:
+        payload = deep_clean(payload)   # ← PAKOLLINEN
         data = json.dumps(payload, ensure_ascii=False)
         c.publish(topic, data, qos=1)
         log("MQTT_SENT", f"{len(data)} bytes")
     except Exception as e:
         log("MQTT_ERROR", str(e))
+
 
 # ---------------------------------------------------------------------
 # Home Assistant WebSocket listener
@@ -66,7 +82,10 @@ async def ha_listener(c, topic, gateway_id):
     except Exception:
         fatal("websockets missing")
 
-    token = os.environ.get("SUPERVISOR_TOKEN") or fatal("SUPERVISOR_TOKEN missing")
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        fatal("SUPERVISOR_TOKEN missing")
+
     backoff = 1
 
     while not shutdown_event.is_set():
@@ -122,6 +141,8 @@ async def ha_listener(c, topic, gateway_id):
                         },
                         "event": ev,
                     })
+
+
 
         except Exception as e:
             log("WS_WARN", str(e))
